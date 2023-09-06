@@ -4,7 +4,7 @@ resource "azurerm_resource_group" "rg" {
 }
 
 resource "azurerm_virtual_network" "vnet" {
-  name                = "vnet-stock_market"
+  name                = "vnet-stock-market"
   address_space       = ["10.0.0.0/16"]
   location            = azurerm_resource_group.rg.location
   resource_group_name = azurerm_resource_group.rg.name
@@ -147,79 +147,67 @@ resource "local_file" "ssh_pem" {
   content = tls_private_key.vm_ssh.private_key_pem
 }
 
-resource "azurerm_virtual_machine" "web_vm" {
+resource "azurerm_linux_virtual_machine" "web_vm" {
   name                = "web-vm"
   location            = azurerm_resource_group.rg.location
   resource_group_name = azurerm_resource_group.rg.name
-  vm_size             = "Standard_B2ats_v2"
+  size                = "Standard_B1ls"
+  admin_username      = var.admin_user
   network_interface_ids = [
     azurerm_network_interface.web_nic.id,
   ]
 
-  storage_image_reference {
+  admin_ssh_key {
+    public_key = tls_private_key.vm_ssh.public_key_openssh
+    username   = var.admin_user
+  }
+
+  source_image_reference {
     publisher = "Canonical"
-    offer     = "UbuntuServer"
-    sku       = "18.04-LTS"
+    offer     = "0001-com-ubuntu-minimal-jammy"
+    sku       = "minimal-22_04-lts-gen2"
     version   = "latest"
   }
 
-  storage_os_disk {
-    name              = "web-osdisk"
-    caching           = "ReadWrite"
-    create_option     = "FromImage"
-    managed_disk_type = "Standard_LRS"
+  os_disk {
+    caching              = "ReadWrite"
+    storage_account_type = "Standard_LRS"
   }
 
-  os_profile {
-    computer_name  = "web-vm"
-    admin_username = var.admin_user
-    admin_password = var.admin_password
-  }
+  depends_on = [azurerm_linux_virtual_machine.database_vm]
 
-  os_profile_linux_config {
-    disable_password_authentication = false
-  }
-
-  depends_on = [azurerm_virtual_machine.database_vm]
 }
 
-resource "azurerm_virtual_machine" "database_vm" {
+resource "azurerm_linux_virtual_machine" "database_vm" {
   name                = "database-vm"
   location            = azurerm_resource_group.rg.location
   resource_group_name = azurerm_resource_group.rg.name
-  vm_size             = "Standard_B2ats_v2"
+  size                = "Standard_B1ls"
+  admin_username      = var.admin_user
   network_interface_ids = [
     azurerm_network_interface.database_nic.id,
   ]
 
-  storage_image_reference {
+  admin_ssh_key {
+    public_key = tls_private_key.vm_ssh.public_key_openssh
+    username   = var.admin_user
+  }
+
+  source_image_reference {
     publisher = "Canonical"
-    offer     = "UbuntuServer"
-    sku       = "18.04-LTS"
+    offer     = "0001-com-ubuntu-minimal-jammy"
+    sku       = "minimal-22_04-lts-gen2"
     version   = "latest"
   }
 
-  storage_os_disk {
-    name              = "database-osdisk"
-    caching           = "ReadWrite"
-    create_option     = "FromImage"
-    managed_disk_type = "Standard_LRS"
-  }
-
-  os_profile {
-    computer_name  = "database-vm"
-    admin_username = var.admin_user
-    admin_password = var.admin_password
-
-  }
-
-  os_profile_linux_config {
-    disable_password_authentication = false
+  os_disk {
+    caching              = "ReadWrite"
+    storage_account_type = "Standard_LRS"
   }
 }
 
 resource "azurerm_managed_disk" "web-disk" {
-  name                 = "${azurerm_virtual_machine.web_vm.name}-disk1"
+  name                 = "${azurerm_linux_virtual_machine.web_vm.name}-disk1"
   location             = azurerm_resource_group.rg.location
   resource_group_name  = azurerm_resource_group.rg.name
   storage_account_type = "Standard_LRS"
@@ -229,9 +217,10 @@ resource "azurerm_managed_disk" "web-disk" {
 #attach web disk to web vm
 resource "azurerm_virtual_machine_data_disk_attachment" "web_disk_attach" {
   managed_disk_id    = azurerm_managed_disk.web-disk.id
-  virtual_machine_id = azurerm_virtual_machine.web_vm.id
+  virtual_machine_id = azurerm_linux_virtual_machine.web_vm.id
   lun                = "10"
   caching            = "ReadWrite"
+  depends_on = [azurerm_linux_virtual_machine.web_vm, azurerm_managed_disk.web-disk]
 }
 #web provision to mount disk
 resource "null_resource" "web_vm_prov" {
@@ -239,7 +228,7 @@ resource "null_resource" "web_vm_prov" {
     type = "ssh"
     user = var.admin_user
     private_key = tls_private_key.vm_ssh.private_key_pem
-    host = azurerm_public_ip.web_public_ip.id
+    host = azurerm_public_ip.web_public_ip.ip_address
   }
   provisioner "remote-exec" {
     inline=[
@@ -251,11 +240,14 @@ resource "null_resource" "web_vm_prov" {
   depends_on = [
     azurerm_virtual_machine_data_disk_attachment.web_disk_attach
   ]
+  triggers = {
+    always_run = timestamp()
+  }
 }
 
 #create db vm managed disk
 resource "azurerm_managed_disk" "database-disk" {
-  name                 = "${azurerm_virtual_machine.database_vm.name}-disk1"
+  name                 = "${azurerm_linux_virtual_machine.database_vm.name}-disk1"
   location             = azurerm_resource_group.rg.location
   resource_group_name  = azurerm_resource_group.rg.name
   storage_account_type = "Standard_LRS"
@@ -265,9 +257,10 @@ resource "azurerm_managed_disk" "database-disk" {
 #attach db disk to web vm
 resource "azurerm_virtual_machine_data_disk_attachment" "database_disk_attach" {
   managed_disk_id    = azurerm_managed_disk.database-disk.id
-  virtual_machine_id = azurerm_virtual_machine.database_vm.id
+  virtual_machine_id = azurerm_linux_virtual_machine.database_vm.id
   lun                = "10"
   caching            = "ReadWrite"
+  depends_on = [azurerm_linux_virtual_machine.database_vm, azurerm_managed_disk.database-disk]
 }
 #db provision to mount disk
 resource "null_resource" "db_vm_prov" {
@@ -275,7 +268,7 @@ resource "null_resource" "db_vm_prov" {
     type = "ssh"
     user = var.admin_user
     private_key = tls_private_key.vm_ssh.private_key_pem
-    host = azurerm_public_ip.database_public_ip.id
+    host = azurerm_public_ip.database_public_ip.ip_address
   }
   provisioner "remote-exec" {
     inline=[
@@ -287,41 +280,43 @@ resource "null_resource" "db_vm_prov" {
   depends_on = [
     azurerm_virtual_machine_data_disk_attachment.database_disk_attach
   ]
+  triggers = {
+    always_run = timestamp()
+  }
 }
 
 resource "azurerm_virtual_machine_extension" "database_ext" {
   name                 = "init_postgresql"
-  virtual_machine_id   = azurerm_virtual_machine.database_vm.id
+  virtual_machine_id   = azurerm_linux_virtual_machine.database_vm.id
   publisher            = "Microsoft.Azure.Extensions"
   type                 = "CustomScript"
   type_handler_version = "2.0"
 
   settings = <<SETTINGS
  {
-  "commandToExecute": "sudo apt-get update && sudo apt install git -y && git clone https://github.com/MadMax-G/terraform_proj.git && sudo sh /var/lib/waagent/custom-script/download/0/terraform_proj/scripts/database_script.sh '${var.app_port}' '${var.database_private_ip}' '${var.admin_user}' '${var.admin_password}' '${var.public_subnet}'"
-}
+  "commandToExecute": "sudo apt-get update && sudo apt install git -y && git clone https://github.com/MadMax-G/terraform_proj.git && sudo bash ./terraform_proj/scripts/database_script.bash '${var.app_port}' '${var.database_private_ip}' '${var.admin_user}' '${var.admin_password}' '${var.public_subnet}'"
+ }
 SETTINGS
   depends_on = [
-  azurerm_virtual_machine.database_vm
+  null_resource.db_vm_prov
   ]
 }
 
 #creating web extension
 resource "azurerm_virtual_machine_extension" "web_ext" {
-  name                 = "install_run_flask"
-  virtual_machine_id   = azurerm_virtual_machine.web_vm.id
+  name                 = "install-run-flask"
+  virtual_machine_id   = azurerm_linux_virtual_machine.web_vm.id
   publisher            = "Microsoft.Azure.Extensions"
   type                 = "CustomScript"
   type_handler_version = "2.0"
 
   settings = <<SETTINGS
  {
-  "commandToExecute": "sudo apt-get update && sudo apt install git -y && git clone https://github.com/MadMax-G/terraform_proj.git && sudo sh /var/lib/waagent/custom-script/download/0/terraform_proj/scripts/web_script.sh '${var.app_port}' '${var.database_private_ip}' '${var.admin_user}' '${var.admin_password}' '${var.public_subnet}'"
+  "commandToExecute": "sudo apt-get update && sudo apt install git -y && git clone https://github.com/MadMax-G/terraform_proj.git && sudo bash ./terraform_proj/scripts/web_script.bash '${var.app_port}' '${var.database_private_ip}' '${var.admin_user}' '${var.admin_password}' '${var.public_subnet}'"
 }
 SETTINGS
   depends_on = [
-  azurerm_virtual_machine.database_vm,
     azurerm_virtual_machine_extension.database_ext,
-    azurerm_virtual_machine.web_vm
+    azurerm_linux_virtual_machine.web_vm
   ]
 }
