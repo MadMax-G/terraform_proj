@@ -6,10 +6,11 @@ import psycopg2
 open_port = os.environ["APP_PORT"]
 db_host = os.environ["DB_IP"]
 db_pass = os.environ["DB_PASS"]
+db_username = os.environ["DB_USER"]
 
 conn = psycopg2.connect(host=db_host,
                         database='flask_db',
-                        user="maxim",
+                        user=db_username,
                         password=db_pass)
 
 # Open a cursor to perform database operation

@@ -8,13 +8,14 @@ open_port = os.environ["APP_PORT"]
 app = Flask(__name__)
 db_host = os.environ["DB_IP"]
 db_pass = os.environ["DB_PASS"]
+db_username = os.environ["DB_USER"]
 
 
 # connecting to db
 def get_db_connection():
     conn = psycopg2.connect(host=db_host,
                             database='flask_db',
-                            user="maxim",
+                            user=db_username,
                             password=db_pass)
     return conn
 
@@ -50,4 +51,4 @@ def create():
     return render_template('create.html')
 
 
-app.run(host="0.0.0.0", port=int(open_port))
+app.run(host="0.0.0.0", port=open_port)
